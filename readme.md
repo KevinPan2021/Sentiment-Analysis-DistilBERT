@@ -1,5 +1,5 @@
 Introduction:
-	This project aims to preform Finetuning Using DistilBERT from HuggingFace
+	This project aims to finetune DistilBERT from HuggingFace on IMDB Movie Review Sentiment Analysis dataset.
 
 
 
@@ -10,7 +10,7 @@ Dataset:
 Build: 
 	NIVIDIA RTX 4060
 	Cuda 12.1
-	Anaconda 3 (Python 3.10)
+	Anaconda 3 (Python 3.11)
 	PyTorch version: 2.1.2
 
 
@@ -24,11 +24,9 @@ Generate ".py" file from ".ui" file:
 Core Project Structure:
 	GUI.py (Run to generate a GUI)
 	main.py (Run to train model)
+	distilBERT.py
 	qt_main.py
 	fine_tuning.py
 	visualization.py
-
-
-Credits:
-	https://www.youtube.com/watch?v=GSt00_-0ncQ&ab_channel=PatrickLoeber
+	summary.py
 	

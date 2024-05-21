@@ -2,12 +2,14 @@ application_name = 'Sentiment Analysis'
 # pyqt packages
 from PyQt5.QtWidgets import QMainWindow, QApplication
 
+import pickle
 import sys
 import torch
-from transformers import DistilBertTokenizerFast, AutoModelForSequenceClassification
+from transformers import DistilBertTokenizerFast
 
 from qt_main import Ui_Application
-from main import compute_device, inference
+from main import BidirectionalMap, compute_device, inference
+from distilBERT import DistilBERT
 
 
 
@@ -22,7 +24,9 @@ class QT_Action(Ui_Application, QMainWindow):
         # runtime variable
         self.model = None
         self.tokenizer = None
-        
+        with open('label_ind_map.pkl', 'rb') as f:
+            self.label_ind_map = pickle.load(f)
+            
         # load the model
         self.load_model_action()
         
@@ -41,32 +45,29 @@ class QT_Action(Ui_Application, QMainWindow):
         
         # load the model
         if self.model_name == 'DistilBERT':
-            model_name = 'distilbert-base-uncased'
-            self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
-            self.tokenizer = DistilBertTokenizerFast.from_pretrained(model_name)
+            label2id = self.label_ind_map.key_to_value
+            id2label = self.label_ind_map.value_to_key
+            self.model = DistilBERT(id2label, label2id).model
+            self.tokenizer = DistilBertTokenizerFast.from_pretrained('dslim/distilbert-NER')
         
         self.model.load_state_dict(torch.load(f'{type(self.model).__name__}_finetuned.pth'))
             
         # move model to GPU
         self.model = self.model.to(compute_device())
-    
         
     
         
     def process_action(self):
         # get the input sentence
-        question = self.textEdit_input.toPlainText()
+        data = self.textEdit_text.toPlainText()
+
+        tok = self.tokenizer(data)
         
         # model inference
-        output = inference(question, self.model, self.tokenizer, compute_device())[0]
+        output = inference(self.model, torch.tensor(tok['input_ids']))
         
-        if output.endswith('0'):
-            output = 'negative'
-        else:
-            output = 'positive'
-            
         # print out the output sentence
-        self.textEdit_output.setPlainText(output)
+        self.lineEdit_response.setText(output)
         
         
 def main():

@@ -57,7 +57,7 @@
     <item>
      <layout class="QVBoxLayout" name="verticalLayout_3">
       <item>
-       <layout class="QHBoxLayout" name="horizontalLayout_2">
+       <layout class="QHBoxLayout" name="horizontalLayout">
         <item>
          <layout class="QVBoxLayout" name="verticalLayout">
           <item>
@@ -71,7 +71,7 @@
              <string notr="true">color:white</string>
             </property>
             <property name="text">
-             <string>Comments</string>
+             <string>Text</string>
             </property>
             <property name="alignment">
              <set>Qt::AlignCenter</set>
@@ -79,60 +79,24 @@
            </widget>
           </item>
           <item>
-           <widget class="QTextEdit" name="textEdit_input">
+           <widget class="QTextEdit" name="textEdit_text">
             <property name="minimumSize">
              <size>
-              <width>580</width>
+              <width>0</width>
               <height>500</height>
              </size>
             </property>
             <property name="maximumSize">
              <size>
-              <width>580</width>
+              <width>16777215</width>
               <height>500</height>
              </size>
             </property>
-            <property name="styleSheet">
-             <string notr="true">background-color: rgb(56, 64, 85);
-color:white;</string>
+            <property name="cursor" stdset="0">
+             <cursorShape>IBeamCursor</cursorShape>
             </property>
-           </widget>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <layout class="QVBoxLayout" name="verticalLayout_2">
-          <item>
-           <widget class="QLabel" name="label_4">
-            <property name="font">
-             <font>
-              <pointsize>14</pointsize>
-             </font>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">color:white</string>
-            </property>
-            <property name="text">
-             <string>Response</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QTextEdit" name="textEdit_output">
-            <property name="minimumSize">
-             <size>
-              <width>580</width>
-              <height>500</height>
-             </size>
-            </property>
-            <property name="maximumSize">
-             <size>
-              <width>580</width>
-              <height>500</height>
-             </size>
+            <property name="mouseTracking">
+             <bool>true</bool>
             </property>
             <property name="styleSheet">
              <string notr="true">background-color: rgb(56, 64, 85);
@@ -218,6 +182,57 @@ QComboBox:disabled {
          </widget>
         </item>
         <item>
+         <spacer name="horizontalSpacer_2">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>40</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QLabel" name="label_7">
+          <property name="font">
+           <font>
+            <pointsize>10</pointsize>
+           </font>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">color:white</string>
+          </property>
+          <property name="text">
+           <string>Response</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLineEdit" name="lineEdit_response">
+          <property name="minimumSize">
+           <size>
+            <width>140</width>
+            <height>35</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>140</width>
+            <height>35</height>
+           </size>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">background-color: rgb(56, 64, 85);
+color:white;</string>
+          </property>
+          <property name="readOnly">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
          <spacer name="horizontalSpacer_3">
           <property name="orientation">
            <enum>Qt::Horizontal</enum>
@@ -231,13 +246,6 @@ QComboBox:disabled {
          </spacer>
         </item>
        </layout>
-      </item>
-      <item>
-       <widget class="Line" name="line">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-       </widget>
       </item>
       <item>
        <layout class="QHBoxLayout" name="horizontalLayout_4">

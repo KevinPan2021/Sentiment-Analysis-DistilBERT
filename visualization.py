@@ -10,20 +10,15 @@ def plot_training_curves(train_acc, train_loss, valid_acc, valid_loss):
     plt.xlabel('epochs')
     plt.ylabel('cross entropy loss')
     plt.legend()
+    plt.show()
     
     plt.figure()
     plt.plot(train_acc, label='train')
     plt.plot(valid_acc, label='valid')
+    plt.ylim([0, 100])
     plt.title('Accuracy curves')
     plt.xlabel('epochs')
     plt.ylabel('Accuracy score')
     plt.legend()
+    plt.show()
     
-    
-# print the sentences inline
-def print_sentences(input_sentence, output_sentence, pred_sentence=None):
-    print('>', input_sentence.strip())
-    print('=', output_sentence.strip())
-    if not pred_sentence is None:
-        print('<', pred_sentence.strip())
-    print()
