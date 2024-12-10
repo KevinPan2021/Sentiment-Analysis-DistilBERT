@@ -1,20 +1,13 @@
-from transformers import DistilBertTokenizerFast
 import torch
-from sklearn.model_selection import train_test_split
+import tiktoken
 from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
-import os
-from multiprocessing import Pool
-import pickle
-from bs4 import BeautifulSoup
-import logging
+import pandas as pd
+import json
+from torch.nn import functional as F
 
-from distilBERT import DistilBERT
-from fine_tuning import model_finetuning, feedforward
-
-
-# Set the logging level to suppress warnings
-logging.basicConfig(level=logging.ERROR)
+from gpt import GPT2
+from fine_tuning import model_finetune, feedforward
+from model_converter import load_from_standard_weights
 
 
 # supports both Mac mps and CUDA
@@ -25,166 +18,187 @@ def compute_device():
         return 'mps'
     else:
         return 'cpu'
-    
 
-# bidirectional dictionary
-class BidirectionalMap:
-    def __init__(self):
-        self.key_to_value = {}
-        self.value_to_key = {}
-    
-    def __len__(self):
-        return len(self.key_to_value)
-    
-    def add_mapping(self, key, value):
-        self.key_to_value[key] = value
-        self.value_to_key[value] = key
 
-    def get_value(self, key):
-        return self.key_to_value.get(key, 0)
+            
+# convert QA json formate to dataframe ['questions', 'answers']
+def QA_json_to_dataframe(file_path):
+    # read the json file
+    file = json.loads(open(file_path).read())
 
-    def get_key(self, value):
-        return self.value_to_key.get(value)
-    
-    
+    # parsing
+    data = pd.json_normalize(file, ['data', 'paragraphs'])[['context', 'qas']]
 
-def read_text_file(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
-        text_data = f.read()
-        # Parse HTML and extract text, remove html tags
-        soup = BeautifulSoup(text_data, "html.parser")
-        clean_text = soup.get_text()
-        return clean_text
+    # List to store each row of the final DataFrame
+    rows = []
     
+    # Iterate through each row of the flattened DataFrame
+    for index, row in data.iterrows():
+        context = row['context']
+        for qa_pair in row['qas']:
+            question = qa_pair['question']
+            answer = qa_pair['answers'][0]['text'] if qa_pair['answers'] else None
+            rows.append([context, question, answer])
     
+    # Create a DataFrame from the list of rows
+    data = pd.DataFrame(rows, columns=['context', 'question', 'answer'])
+
+    return data
+
+
     
-def read_data(path):
-    texts = []
-    labels = []
-    pool = Pool(processes=6)
-    
-    for label_class in ['pos', 'neg']:
-        label_dir = os.path.join(path, label_class)
-        file_paths = [
-            os.path.join(label_dir, text_file) for text_file in os.listdir(label_dir)
-        ]
+# over writting the Dataset class to utilize binary file parsing
+class QA_Dataset(Dataset):
+    def __init__(self, dataframe, tokenizer, seq_length=1024):
+        self.data = dataframe
+        self.tokenizer = tokenizer
+        self.seq_length = seq_length
         
-        # Use multiprocessing to read text files in parallel
-        with tqdm(total=len(file_paths), desc=f"Reading {label_class} files") as pbar:
-            for content in pool.imap_unordered(read_text_file, file_paths):
-                texts.append(content)
-                labels.append(0 if label_class.endswith('neg') else 1)
-                pbar.update(1)
-    
-    pool.close()
-    pool.join()
-    
-    return texts, labels
-
-
-
-class IMDB_Dataset(Dataset):
-    def __init__(self, encodings, labels):
-        self.encodings = encodings
-        self.labels = labels
-    
-    def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
-        item['labels'] = torch.tensor(self.labels[idx])
-        return item
-    
     def __len__(self):
-        return len(self.labels)
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data.iloc[idx]
+        context, question, answer = item['context'], item['question'], item['answer']
+        
+        # Combine question, answer, and prompt template tokens
+        combined_str = f'Context: {context} Question: {question} Answer: {answer}'
+
+        # Tokenize the combined string
+        combined_tokens = self.tokenizer.encode_ordinary(combined_str)
+        
+        # Exceeds max sequence length, Truncate 
+        if len(combined_tokens) >= self.seq_length:
+            combined_tokens = combined_tokens[-self.seq_length:]
+        
+        # pad the sequence to max_seq_length
+        eot_tok = self.tokenizer._special_tokens['<|endoftext|>']
+        combined_tokens += [eot_tok] * (self.seq_length-len(combined_tokens))
+        
+        # Create input-output pair (x, y)
+        x = torch.tensor(combined_tokens[:-1])  # Remove last token
+        y = torch.tensor(combined_tokens[1:])   # Shift by one
+
+        return x, y
     
-    
-    
-@torch.no_grad() 
-def inference(model, data):
-    model.eval()
-    device = next(model.parameters()).device
-    
-    input_ids = data.clone().unsqueeze(0).to(device)  # Add batch dimension
-    attention_mask = torch.ones_like(input_ids).to(device) # placeholder
-    outputs = model(input_ids, attention_mask=attention_mask) 
-    
-    labels = torch.argmax(outputs.logits, dim=-1).squeeze()
-    labels = model.config.id2label[labels.item()]
-    return labels
 
 
 
+# Question and Answering inference
+# inputs a question, generate an answer
+@torch.no_grad()
+def inference(model, tokenizer, context, question, temperature=1.0, top_k=None):
+    model = model.eval()
+    
+    # Combine question, answer, and prompt template tokens
+    prompt = f'Context: {context} Question: {question} Answer: '
+    
+    x = tokenizer.encode_ordinary(prompt) # text encoding
+    input_len = len(x) # length of the prompt + question tokens
+    x = torch.tensor(x, dtype=torch.long) # convert to tensor
+    x = x.unsqueeze(0) # unsqueeze the batch dimension
+    idx = x.to(compute_device()) # move to GPU device
+    
+    # inference
+    max_new_tokens = 128 # give 128 tokens for the answer tokens
+    
+    # idx is (B, T) array of indices in the current context
+    for _ in range(max_new_tokens):
+        # crop idx to the last block_size tokens
+        idx_cond = idx[:, -1024:]
+       # forward the model to get the logits for the index in the sequence
+        logits, _ = model(idx_cond)
+        # pluck the logits at the final step and scale by desired temperature
+        logits = logits[:, -1, :] / temperature
+        # optionally crop the logits to only the top k options
+        if top_k is not None:
+            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+            logits[logits < v[:, [-1]]] = -float('Inf')
+        # apply softmax to convert logits to (normalized) probabilities
+        probs = F.softmax(logits, dim=-1)
+        # sample from the distribution
+        idx_next = torch.multinomial(probs, num_samples=1)
+        # append sampled index to the running sequence and continue
+        idx = torch.cat((idx, idx_next), dim=1)
+        
+    prediction = idx[0].tolist()
+     
+    # processing the prediction
+    prediction = prediction[input_len:] # remove the questions tokens
+    prediction = [token for token in prediction if token != tokenizer._special_tokens['<|endoftext|>']]# remove all <eos> tokens
+    prediction = tokenizer.decode(prediction) # decoding to text
+    prediction = prediction.strip() # strip the beginning/end newline and space character (if exists)
+    return prediction
+    
+
+            
 def main():
-    # create a ind to label map
-    label_ind_map = BidirectionalMap()
-    label_ind_map.add_mapping("Negative", 0)
-    label_ind_map.add_mapping("Positive", 1)
-    label2id = label_ind_map.key_to_value
-    id2label  = label_ind_map.value_to_key
-    # Save the instance to a pickle file
-    with open("label_ind_map.pkl", "wb") as f:
-        pickle.dump(label_ind_map, f)
+    # create GPT model
+    num_embed = 768
+    num_heads = 12
+    num_layers = 12
+    model = GPT2(num_embed, num_heads, num_layers)
     
-    # load model and tokenizer
-    model = DistilBERT(id2label, label2id).model
+    # load the pretained weights
+    pretrained_path = '../pretrained_models/GPT/GPT2.bin'
+    model.load_state_dict(load_from_standard_weights(pretrained_path))
+    
+    # use Low Rank Adaptation (LoRA) for fine tuning
+    model.apply_lora() 
+    
+    # move model to GPU
     model = model.to(compute_device())
-    tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
     
-    # load and process text data
-    X, Y = read_data('../Datasets/Stanford IMDB Movie Review/train')
-    testX, testY = read_data('../Datasets/Stanford IMDB Movie Review/test')
+    # tokenizer
+    tokenizer = tiktoken.get_encoding("gpt2")
     
-    # train-test split
-    trainX, valX, trainY, valY = train_test_split(X, Y, test_size=0.2)
-    del X, Y
+    # loading question and answering datasets
+    QA_path = '../Datasets/Stanford Question Answering Dataset/'
+    df = QA_json_to_dataframe(QA_path + 'train-v1.1.json')
     
-    # tokenize
-    trainX = tokenizer(trainX, truncation=True, padding=True)
-    valX = tokenizer(valX, truncation=True, padding=True)
-    testX = tokenizer(testX, truncation=True, padding=True)
-    
-    # dataset
-    train_dataset = IMDB_Dataset(trainX, trainY)
-    val_dataset = IMDB_Dataset(valX, valY)
-    test_dataset = IMDB_Dataset(testX, testY)
-    del trainX, trainY, valX, valY, testX, testY
-    
-    # dataloader
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
+    # train-valid split
+    train_df = df.iloc[:int(len(df)*0.9)]
+    valid_df = df.iloc[int(len(df)*0.9):]
     
     # visualize some examples
-    for i in range(0, len(train_dataset), len(train_dataset)//5):
-        item = train_dataset[i]
-        x = item['input_ids']
-        x_decoded = tokenizer.decode(x, skip_special_tokens=True)
-        y = item['labels']
-        label = label_ind_map.get_key(y.tolist())
-        print('>', x_decoded)
-        print('=', label)
+    for i in range(0, len(train_df), len(train_df)//5):
+        item = train_df.iloc[i]
+        context, question, answer = item['context'], item['question'], item['answer']
+        print('>>', context)
+        print('>', question)
+        print('=', answer)
         print()
     
-
-    # fine tuning
-    model_finetuning(model, train_loader, val_loader)
+    # create data loader
+    # use seq_length=512 to speed up
+    train_dataset = QA_Dataset(train_df, tokenizer, seq_length=512) 
+    train_loader = DataLoader(train_dataset, batch_size=6, shuffle=True)
+    valid_dataset = QA_Dataset(valid_df, tokenizer, seq_length=512) 
+    valid_loader = DataLoader(valid_dataset, batch_size=12, shuffle=False)
     
-    # load the best model
+    # fine tunning on question and answering tasks
+    model_finetune(model, train_loader, valid_loader)
+    
+    # load fine tuned model
     model.load_state_dict(torch.load(f'{type(model).__name__}_finetuned.pth'))
     
-    # get the test dataset metrics
+    # test preformance
+    test_df = QA_json_to_dataframe(QA_path + 'dev-v1.1.json')
+    test_dataset = QA_Dataset(test_df, tokenizer, seq_length=512)
+    test_loader = DataLoader(test_dataset, batch_size=12, shuffle=False)
+    
+    # randomly picked a few questions from validation dataset
+    print('Test Performance')
     feedforward(model, test_loader)
-    for i in range(0, len(test_dataset), len(test_dataset)//5):
-        item = test_dataset[i]
-        x = item['input_ids']
-        x_decoded = tokenizer.decode(x, skip_special_tokens=True)
-        y = item['labels']
-        label = label_ind_map.get_key(y.tolist())
-        pred = inference(model, x)
-        print('>', x_decoded)
-        print('=', label)
-        print('<', pred)
+    for i in range(0, len(test_df), len(test_df)//5):
+        item = test_df.iloc[i]
+        context, question, answer = item['context'], item['question'], item['answer']
+        prediction = inference(model, tokenizer, context, question)
+        print('>>', context)
+        print('>', question)
+        print('=', answer)
+        print('<', prediction)
         print()
-        
-
-if __name__ == "__main__":
+            
+if __name__ == '__main__':
     main()
