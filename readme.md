@@ -6,7 +6,7 @@ This project aims to finetune DistilBERT from HuggingFace on IMDB Movie Review S
 
 
 ### Dataset: 
-[Kaggle machine translation](https://ai.stanford.edu/~amaas/data/sentiment/)
+[Stanford Movie Review Dataset](https://ai.stanford.edu/~amaas/data/sentiment/)
 
 
 ### Build: 
